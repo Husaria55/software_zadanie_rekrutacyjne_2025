@@ -476,7 +476,7 @@ class StandaloneMock:
                 self.print_rocket_status()
             else:
                 # Physics update with zero thrust
-                m = max(self.physics['m_dry'], self.physics['m_dry'])
+                m = self.physics['m_dry']
                 R = self.physics['R_earth']
                 M = self.physics['M_earth']
                 G = self.physics['G']
@@ -497,7 +497,7 @@ class StandaloneMock:
         
         elif self.state == SimulationState.PARACHUTE_DEPLOYED:
             # Increase drag dramatically to model parachute and integrate physics.
-            m = max(self.physics['m_dry'], self.physics['m_dry'])
+            m = self.physics['m_dry']
             R = self.physics['R_earth']
             M = self.physics['M_earth']
             G = self.physics['G']
@@ -532,7 +532,7 @@ class StandaloneMock:
         
         elif self.state == SimulationState.FREEFALL:
             # Freefall with aerodynamic drag but no parachute.
-            m = max(self.physics['m_dry'], self.physics['m_dry'])
+            m = self.physics['m_dry']
             R = self.physics['R_earth']
             M = self.physics['M_earth']
             G = self.physics['G']
