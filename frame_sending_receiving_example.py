@@ -47,18 +47,20 @@ if __name__ == "__main__":
 
     #Global variables for flight parameters
     # altitude_value (float)
-    altitude_value = None
+    altitude_value = 0.0
     # oxidizer_pressure_value (float)
-    oxidizer_pressure_value = None
+    oxidizer_pressure_value = 0.0
     # oxidizer_level_value (float)
-    oxidizer_level_value = None
+    oxidizer_level_value = 0.0
     # fuel_level_value (float)
-    fuel_level_value = None
+    fuel_level_value = 0.0
     # angle_value (float)
-    angle_value = None
+    angle_value = 0.0
 
     #Lists for storing data
     altitude_list = []
+    velocity_list = []
+    acceleration_list = []
     oxidizer_pressure_list = []
     oxidizer_level_list = []
     fuel_level_list = []
@@ -275,6 +277,18 @@ if __name__ == "__main__":
             oxidizer_level_list.append(oxidizer_level_value)
             fuel_level_list.append(fuel_level_value)
             angle_list.append(angle_value)
+            #Calculating velocity
+            if len(altitude_list) > 1:
+                velocity_value = altitude_list[-1] - altitude_list[-2] / 0.1
+            else:
+                velocity_value = 0
+            #Calculating acceleration
+            if len(velocity_list) > 1:
+                acceleration_value = velocity_list[-1] - velocity_list[-2] / 0.1
+            else:
+                acceleration_value = 0
+            velocity_list.append(velocity_value)
+            acceleration_list.append(acceleration_value)
             
             #Launch preparation sequence
             if oxidizer_level_value == 100 and fuel_level_value == 0:
@@ -316,18 +330,33 @@ if __name__ == "__main__":
     while True:
         try:
             frame = cm.receive() # We can handle frames using callbacks or by getting frame right from receive() call
+        
             altitude_list.append(altitude_value)
             oxidizer_pressure_list.append(oxidizer_pressure_value)
             oxidizer_level_list.append(oxidizer_level_value)
             fuel_level_list.append(fuel_level_value)
             angle_list.append(angle_value)
+            #Calculating velocity
+            if len(altitude_list) > 1:
+                velocity_value = (altitude_list[-1] - altitude_list[-2]) / 0.1
+            else:
+                velocity_value = 0
+            #Calculating acceleration
+            if len(velocity_list) > 1:
+                acceleration_value = (velocity_list[-1] - velocity_list[-2]) / 0.1
+            else:
+                acceleration_value = 0
+
+            velocity_list.append(velocity_value)
+            acceleration_list.append(acceleration_value)
 
             if len(altitude_list) > 1:
                 if altitude_list[-1] < altitude_list[-2]:
                     cm.push(parachute_open_frame)
                     cm.send()
-                    if altitude_list[-1] == 0:
+                    if altitude_value < 100:
                         break
+            
 
         except TransportTimeoutError:
             pass

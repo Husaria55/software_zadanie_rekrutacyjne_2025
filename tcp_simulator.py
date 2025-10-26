@@ -4,6 +4,7 @@ import time
 import os
 import yaml
 from enum import Enum
+import math
 
 from communication_library.frame import ids, Frame
 from communication_library.communication_manager import CommunicationManager, TransportType
@@ -87,6 +88,34 @@ class StandaloneMock:
         self.max_altitude = 0.0
         self.velocity = 0.0
         self.thrust_multiplier = 1.0
+        self.flight_start_time = None
+
+        # Physics parameters with sensible defaults. These can be adjusted via terminal dialog.
+        # All units are SI unless stated otherwise.
+        self.physics = {
+            'm_initial': 50.0,          # Initial mass of rocket with propellant [kg]
+            'm_dry': 30.0,              # Dry mass of rocket (no propellant) [kg]
+            't_burn': 6.0,              # Engine burn time [s]
+            'Isp': 180.0,               # Specific impulse [s]
+            'A_ref': 0.0125,            # Reference cross-sectional area [m^2]
+            'C_d': 0.6,                 # Drag coefficient during powered/unpowered flight [-]
+            'rho0': 1.225,              # Sea-level air density [kg/m^3]
+            'H_scale': 8500.0,          # Atmospheric scale height [m]
+            'g0': 9.80665,              # Standard gravity [m/s^2]
+            'G': 6.67430e-11,           # Gravitational constant [m^3 kg^-1 s^-2]
+            'M_earth': 5.97219e24,      # Mass of Earth [kg]
+            'R_earth': 6_371_000.0,     # Radius of Earth [m]
+            # Parachute model: increase drag area and coefficient when deployed
+            'C_d_parachute': 1.5,       # Effective drag coefficient with parachute [-]
+            'A_parachute': 0.5          # Effective area with parachute deployed [m^2]
+        }
+
+        # Ask user if they want to override defaults before simulation starts
+        try:
+            self.configure_physics_via_terminal()
+        except Exception as e:
+            # Fallback silently to defaults if stdin not interactive or any error occurs
+            self._logger.warning(f"Physics configuration skipped: {e}")
 
         self._logger.info(
             f'Rocket simulator is running connected to {proxy_address}:{proxy_port}')
@@ -359,57 +388,84 @@ class StandaloneMock:
                         self._logger.warning(f"Suboptimal pressure {pressure:.1f} bars - thrust reduced to {self.thrust_multiplier*100:.0f}%")
                     
                     self.state = SimulationState.FLIGHT
+                    # Mark the start of powered flight for mass/thrust integration
+                    self.flight_start_time = time.perf_counter()
                     self._logger.info(f'State: {self.state.value} - Engine ignited successfully!')
                     self.print_rocket_status()
         
         elif self.state == SimulationState.FLIGHT:
-            if self.sensors['fuel_level'] > 0:
-                if self.relays['parachute'] == 1:
-                    self.explode("Parachute opened while engine is running - structural failure")
-                    return
-                
-                burn_rate = dt * 8.0
-                self.sensors['fuel_level'] = max(0.0, self.sensors['fuel_level'] - burn_rate)
-                self.sensors['oxidizer_level'] = max(0.0, self.sensors['oxidizer_level'] - burn_rate)
-                self.sensors['oxidizer_pressure'] = max(30.0, self.sensors['oxidizer_pressure'] - dt * 3.0)
-                
-                thrust = 15.0 * self.thrust_multiplier
-                gravity = 9.81
-                acceleration = thrust - gravity
-                self.velocity += acceleration * dt
-                self.sensors['altitude'] += self.velocity * dt
-                
-                self.sensors['angle'] = min(30.0, self.sensors['angle'] + dt * 2.0)
+            # Unified physics model for powered/coast ascent using Newton's 2nd law with variable mass.
+            # Positive direction is upwards.
+            if self.relays['parachute'] == 1:
+                # Opening parachute under thrust risks structural failure
+                self.explode("Parachute opened while engine is running - structural failure")
+                return
+            # Update simple tank indicators and pressure bleeding while engine runs
+            burn_progress = 0.0
+            if self.flight_start_time is not None:
+                t_since_launch = max(0.0, time.perf_counter() - self.flight_start_time)
             else:
-                if self.relays['parachute'] == 1:
-                    if self.velocity > 30.0:
-                        self._logger.error(f'Parachute deployed at too high velocity ({self.velocity:.1f} m/s) during ascent - parachute ripped!')
-                        self._logger.error('Continuing ballistic trajectory...')
-                    else:
-                        self.state = SimulationState.PARACHUTE_DEPLOYED
-                        self._logger.info(f'State: {self.state.value} - Early parachute deployment')
-                        self.print_rocket_status()
-                        return
-                
-                self.velocity -= 9.81 * dt
-                self.sensors['altitude'] += self.velocity * dt
-                
-                self.sensors['angle'] = min(90.0, self.sensors['angle'] + dt * 15.0)
-                
-                if self.sensors['altitude'] > self.max_altitude:
-                    self.max_altitude = self.sensors['altitude']
-                
-                if self.velocity <= 0 and self.apogee_reached_time is None:
-                    self.apogee_reached_time = time.perf_counter()
-                    self.state = SimulationState.APOGEE
-                    self._logger.info(f'State: {self.state.value} - Maximum altitude: {self.sensors["altitude"]:.2f}m')
-                    self.print_rocket_status()
-        
+                t_since_launch = 0.0
+            m_initial = self.physics['m_initial']
+            m_dry = self.physics['m_dry']
+            t_burn = max(1e-6, self.physics['t_burn'])
+            Isp = self.physics['Isp']
+            g0 = self.physics['g0']
+            # Mass flow rate during burn
+            m_propellant = max(0.0, m_initial - m_dry)
+            mdot = m_propellant / t_burn if t_since_launch < t_burn else 0.0
+            burn_progress = min(1.0, t_since_launch / t_burn)
+            # Instantaneous mass
+            m = max(m_dry, m_initial - (m_propellant * burn_progress))
+            # Thrust only during burn; scaled by pressure-quality multiplier
+            F_thrust = (mdot * Isp * g0) * self.thrust_multiplier
+            # Gravity using inverse-square law
+            R = self.physics['R_earth']
+            M = self.physics['M_earth']
+            G = self.physics['G']
+            y = max(0.0, self.sensors['altitude'])
+            r = R + y
+            g_local = G * M / (r * r)
+            F_gravity = m * g_local
+            # Atmospheric density model with exponential decay
+            rho0 = self.physics['rho0']
+            H = self.physics['H_scale']
+            rho = rho0 * math.exp(-max(0.0, y) / max(1.0, H))
+            # Drag area and coefficient; boost if parachute state later
+            C_d = self.physics['C_d']
+            A = self.physics['A_ref']
+            v = self.velocity
+            # Aerodynamic drag opposes motion: F_d = -0.5 * rho * C_d * A * v * |v|
+            F_drag = -0.5 * rho * C_d * A * v * abs(v)
+            # Net force (upwards positive)
+            F_net = F_thrust + F_drag - F_gravity
+            # Integrate motion
+            a = F_net / m
+            self.velocity += a * dt
+            self.sensors['altitude'] += self.velocity * dt
+            # Update simple tanks/pressure visuals to keep UI meaningful
+            if mdot > 0.0:
+                # Convert mass burn to percentage indicators heuristically
+                level_drop = (mdot * dt) / max(1e-6, m_propellant) * 100.0
+                self.sensors['fuel_level'] = max(0.0, self.sensors['fuel_level'] - level_drop)
+                self.sensors['oxidizer_level'] = max(0.0, self.sensors['oxidizer_level'] - level_drop)
+                self.sensors['oxidizer_pressure'] = max(30.0, self.sensors['oxidizer_pressure'] - dt * 3.0)
+            # Angle increases slowly during ascent
+            self.sensors['angle'] = min(90.0, self.sensors['angle'] + dt * 5.0)
+            # Apogee detection when vertical velocity crosses zero upward to downward
+            if self.sensors['altitude'] > self.max_altitude:
+                self.max_altitude = self.sensors['altitude']
+            if self.velocity <= 0 and self.apogee_reached_time is None:
+                self.apogee_reached_time = time.perf_counter()
+                self.state = SimulationState.APOGEE
+                self._logger.info(f'State: {self.state.value} - Maximum altitude: {self.sensors["altitude"]:.2f}m')
+                self.print_rocket_status()
+
         elif self.state == SimulationState.APOGEE:
             time_since_apogee = time.perf_counter() - self.apogee_reached_time
             
+            # After apogee, no thrust, only gravity and drag; allow parachute deployment to affect drag.
             self.sensors['angle'] = min(180.0, self.sensors['angle'] + dt * 20.0)
-            
             if self.relays['parachute'] == 1:
                 self.state = SimulationState.PARACHUTE_DEPLOYED
                 self._logger.info(f'State: {self.state.value}')
@@ -419,14 +475,47 @@ class StandaloneMock:
                 self._logger.info(f'State: {self.state.value} - Parachute not deployed in time!')
                 self.print_rocket_status()
             else:
-                self.velocity -= 9.81 * dt
+                # Physics update with zero thrust
+                m = max(self.physics['m_dry'], self.physics['m_dry'])
+                R = self.physics['R_earth']
+                M = self.physics['M_earth']
+                G = self.physics['G']
+                y = max(0.0, self.sensors['altitude'])
+                r = R + y
+                g_local = G * M / (r * r)
+                F_gravity = m * g_local
+                rho0 = self.physics['rho0']
+                H = self.physics['H_scale']
+                rho = rho0 * math.exp(-max(0.0, y) / max(1.0, H))
+                C_d = self.physics['C_d']
+                A = self.physics['A_ref']
+                v = self.velocity
+                F_drag = -0.5 * rho * C_d * A * v * abs(v)
+                a = (0.0 + F_drag - F_gravity) / m
+                self.velocity += a * dt
                 self.sensors['altitude'] += self.velocity * dt
         
         elif self.state == SimulationState.PARACHUTE_DEPLOYED:
-            terminal_velocity = -5.0
-            self.velocity = max(terminal_velocity, self.velocity - 9.81 * dt)
+            # Increase drag dramatically to model parachute and integrate physics.
+            m = max(self.physics['m_dry'], self.physics['m_dry'])
+            R = self.physics['R_earth']
+            M = self.physics['M_earth']
+            G = self.physics['G']
+            y = max(0.0, self.sensors['altitude'])
+            r = R + y
+            g_local = G * M / (r * r)
+            F_gravity = m * g_local
+            rho0 = self.physics['rho0']
+            H = self.physics['H_scale']
+            rho = rho0 * math.exp(-max(0.0, y) / max(1.0, H))
+            C_d = self.physics['C_d_parachute']
+            A = self.physics['A_parachute']
+            v = self.velocity
+            F_drag = -0.5 * rho * C_d * A * v * abs(v)
+            a = (0.0 + F_drag - F_gravity) / m
+            self.velocity += a * dt
             self.sensors['altitude'] += self.velocity * dt
-            
+            # Orient towards vertical during descent under canopy
             if self.sensors['angle'] > 0:
                 self.sensors['angle'] = max(0.0, self.sensors['angle'] - dt * 30.0)
             elif self.sensors['angle'] < 0:
@@ -442,9 +531,26 @@ class StandaloneMock:
                 self.should_run = False
         
         elif self.state == SimulationState.FREEFALL:
-            self.velocity -= 9.81 * dt
+            # Freefall with aerodynamic drag but no parachute.
+            m = max(self.physics['m_dry'], self.physics['m_dry'])
+            R = self.physics['R_earth']
+            M = self.physics['M_earth']
+            G = self.physics['G']
+            y = max(0.0, self.sensors['altitude'])
+            r = R + y
+            g_local = G * M / (r * r)
+            F_gravity = m * g_local
+            rho0 = self.physics['rho0']
+            H = self.physics['H_scale']
+            rho = rho0 * math.exp(-max(0.0, y) / max(1.0, H))
+            C_d = self.physics['C_d']
+            A = self.physics['A_ref']
+            v = self.velocity
+            F_drag = -0.5 * rho * C_d * A * v * abs(v)
+            a = (0.0 + F_drag - F_gravity) / m
+            self.velocity += a * dt
             self.sensors['altitude'] += self.velocity * dt
-            
+            # Tumble towards downward orientation
             self.sensors['angle'] = min(180.0, self.sensors['angle'] + dt * 20.0)
             
             if self.relays['parachute'] == 1:
@@ -464,6 +570,71 @@ class StandaloneMock:
                 self.print_rocket_status()
                 time.sleep(2)
                 self.should_run = False
+
+    def configure_physics_via_terminal(self):
+        """
+        Simple terminal dialog to let the user adjust physics parameters before simulation starts.
+        Empty input keeps default. Values are validated to be sensible (e.g., masses > 0, dry < initial, etc.).
+        """
+        if not sys.stdin or not sys.stdin.isatty():
+            # Non-interactive environment; keep defaults
+            return
+        print("\n=== Rocket Physics Configuration ===")
+        print("Press Enter to keep default shown in [brackets]. Units: SI.")
+        # Query primary masses first
+        m_initial = self._prompt_float("Initial mass m_initial [kg]", self.physics['m_initial'], min_val=0.1)
+        m_dry = self._prompt_float("Dry mass m_dry [kg]", self.physics['m_dry'], min_val=0.1, max_val=m_initial - 0.01)
+        t_burn = self._prompt_float("Burn time t_burn [s]", self.physics['t_burn'], min_val=0.01)
+        Isp = self._prompt_float("Specific impulse Isp [s]", self.physics['Isp'], min_val=1.0)
+        A_ref = self._prompt_float("Reference area A_ref [m^2]", self.physics['A_ref'], min_val=1e-5)
+        C_d = self._prompt_float("Drag coefficient C_d [-]", self.physics['C_d'], min_val=0.0)
+        rho0 = self._prompt_float("Sea-level density rho0 [kg/m^3]", self.physics['rho0'], min_val=0.1)
+        H = self._prompt_float("Atmospheric scale height H [m]", self.physics['H_scale'], min_val=100.0)
+        g0 = self._prompt_float("Standard gravity g0 [m/s^2]", self.physics['g0'], min_val=1.0)
+        R_earth = self._prompt_float("Planet radius R [m]", self.physics['R_earth'], min_val=1000.0)
+        M_earth = self._prompt_float("Planet mass M [kg]", self.physics['M_earth'], min_val=1e10)
+        # Parachute parameters
+        C_d_p = self._prompt_float("Parachute C_d [-]", self.physics['C_d_parachute'], min_val=0.1)
+        A_p = self._prompt_float("Parachute area [m^2]", self.physics['A_parachute'], min_val=1e-3)
+        # Assign validated values
+        self.physics.update({
+            'm_initial': m_initial,
+            'm_dry': m_dry,
+            't_burn': t_burn,
+            'Isp': Isp,
+            'A_ref': A_ref,
+            'C_d': C_d,
+            'rho0': rho0,
+            'H_scale': H,
+            'g0': g0,
+            'R_earth': R_earth,
+            'M_earth': M_earth,
+            'C_d_parachute': C_d_p,
+            'A_parachute': A_p,
+        })
+        m_propellant = m_initial - m_dry
+        print(f"Computed propellant mass: {m_propellant:.2f} kg; mass flow rate: {m_propellant/t_burn:.2f} kg/s")
+        print("====================================\n")
+
+    def _prompt_float(self, label: str, default: float, min_val: float | None = None, max_val: float | None = None) -> float:
+        """Prompt helper that enforces numeric input with optional bounds; Enter keeps default."""
+        while True:
+            inp = input(f"{label} [{default}]: ").strip()
+            if inp == "":
+                value = default
+            else:
+                try:
+                    value = float(inp)
+                except ValueError:
+                    print("Invalid number. Try again.")
+                    continue
+            if min_val is not None and value < min_val:
+                print(f"Value must be >= {min_val}.")
+                continue
+            if max_val is not None and value > max_val:
+                print(f"Value must be <= {max_val}.")
+                continue
+            return value
 
     def send_feed_frame(self):
         conf_dict = self.config
