@@ -6,6 +6,16 @@ from communication_library.exceptions import TransportTimeoutError, TransportErr
 
 import matplotlib.pyplot as plt
 
+#Helper for plotting filtered series (ignores None)
+def _filtered_xy(series):
+    xs = []
+    ys = []
+    for i, v in enumerate(series):
+        if v is not None:
+            xs.append(i)
+            ys.append(v)
+    return xs, ys
+
 #Functions for handling flight parameters
 
 def on_altitude(frame: Frame):
@@ -65,6 +75,91 @@ if __name__ == "__main__":
     oxidizer_level_list = []
     fuel_level_list = []
     angle_list = []
+
+    # Simple live UI (matplotlib) setup
+    live_ui_enabled = True if plt is not None else False
+    if live_ui_enabled:
+        plt.ion()
+        fig, axes = plt.subplots(3, 2, figsize=(12, 10))
+        ax1 = axes[0][0]
+        altitude_line, = ax1.plot([], [], label="Altitude")
+        ax1.set_title("Altitude")
+        ax1.set_xlabel("Time in seconds")
+        ax1.set_ylabel("m")
+        ax1.grid(True)
+
+        ax2 = axes[0][1]
+        oxidizer_pressure_line, = ax2.plot([], [], color="tab:orange", label="Oxidizer Pressure")
+        ax2.set_title("Oxidizer Pressure")
+        ax2.set_xlabel("Time in seconds")
+        ax2.set_ylabel("bar")
+        ax2.grid(True)
+
+        ax3 = axes[1][0]
+        oxidizer_level_line, = ax3.plot([], [], color="tab:green", label="Oxidizer Level")
+        ax3.set_title("Oxidizer Level")
+        ax3.set_xlabel("Time in seconds")
+        ax3.set_ylabel("%")
+        ax3.grid(True)
+
+        ax4 = axes[1][1]
+        fuel_level_line, = ax4.plot([], [], color="tab:red", label="Fuel Level")
+        ax4.set_title("Fuel Level")
+        ax4.set_xlabel("Time in seconds")
+        ax4.set_ylabel("%")
+        ax4.grid(True)
+
+        ax5 = axes[2][0]
+        acceleration_line, = ax5.plot([], [], color="tab:purple", label="Acceleration")
+        ax5.set_title("Acceleration")
+        ax5.set_xlabel("Time in seconds")
+        ax5.set_ylabel("m/s^2")
+        ax5.grid(True)
+
+        ax6 = axes[2][1]
+        velocity_line, = ax6.plot([], [], color="tab:brown", label="Velocity")
+        ax6.set_title("Vertical Velocity")
+        ax6.set_xlabel("Time in seconds")
+        ax6.set_ylabel("m/s")
+        ax6.grid(True)
+
+        fig.tight_layout()
+
+        ui_tick = 0
+
+        def _update_ui():
+            x, y = _filtered_xy(altitude_list)
+            altitude_line.set_data(x, y)
+            ax1.relim(); ax1.autoscale_view()
+            ax1.set_title(f"Altitude: {altitude_value:.1f} m")
+
+            x, y = _filtered_xy(oxidizer_pressure_list)
+            oxidizer_pressure_line.set_data(x, y)
+            ax2.relim(); ax2.autoscale_view()
+            ax2.set_title(f"Oxidizer Pressure: {oxidizer_pressure_value:.1f} bar")
+
+            x, y = _filtered_xy(oxidizer_level_list)
+            oxidizer_level_line.set_data(x, y)
+            ax3.relim(); ax3.autoscale_view()
+            ax3.set_title(f"Oxidizer Level: {oxidizer_level_value:.1f} %")
+
+            x, y = _filtered_xy(fuel_level_list)
+            fuel_level_line.set_data(x, y)
+            ax4.relim(); ax4.autoscale_view()
+            ax4.set_title(f"Fuel Level: {fuel_level_value:.1f} %")
+
+            x, y = _filtered_xy(acceleration_list)
+            acceleration_line.set_data(x, y)
+            ax5.relim(); ax5.autoscale_view()
+            ax5.set_title("Acceleration")
+
+            x, y = _filtered_xy(velocity_list)
+            velocity_line.set_data(x, y)
+            ax6.relim(); ax6.autoscale_view()
+            ax6.set_title("Vertical Velocity")
+
+            fig.canvas.draw_idle()
+            plt.pause(0.01)
 
     altitude_frame = Frame(ids.BoardID.SOFTWARE, 
                            ids.PriorityID.LOW, 
@@ -317,6 +412,10 @@ if __name__ == "__main__":
                 cm.push(oxidizer_heater_off_frame)
                 cm.send()
                 break
+            if live_ui_enabled:
+                ui_tick += 1
+                if ui_tick % 5 == 0:
+                    _update_ui()
             
         except TransportTimeoutError:
             pass
@@ -378,6 +477,10 @@ if __name__ == "__main__":
                     cm.send()
                     if altitude_value < 100:
                         break
+            if live_ui_enabled:
+                ui_tick += 1
+                if ui_tick % 5 == 0:
+                    _update_ui()
             
 
         except TransportTimeoutError:
@@ -387,7 +490,7 @@ if __name__ == "__main__":
 
 # Data plotting
 if __name__ == "__main__":
-    if plt is not None:
+    if plt is not None and not ('live_ui_enabled' in globals() and live_ui_enabled):
         def _filtered_xy(series):
             xs = []
             ys = []
