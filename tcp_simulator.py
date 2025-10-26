@@ -90,15 +90,15 @@ class StandaloneMock:
         self.thrust_multiplier = 1.0
         self.flight_start_time = None
 
-        # Physics parameters with sensible defaults. These can be adjusted via terminal dialog.
+        # Physics parameters with default values similar to AGH Space Systems rocket SKYLARK. These can be adjusted via terminal dialog.
         # All units are SI unless stated otherwise.
         self.physics = {
-            'm_initial': 50.0,          # Initial mass of rocket with propellant [kg]
-            'm_dry': 30.0,              # Dry mass of rocket (no propellant) [kg]
-            't_burn': 6.0,              # Engine burn time [s]
-            'Isp': 180.0,               # Specific impulse [s]
-            'A_ref': 0.0125,            # Reference cross-sectional area [m^2]
-            'C_d': 0.6,                 # Drag coefficient during powered/unpowered flight [-]
+            'm_initial': 57.0,          # Initial mass of rocket with propellant [kg]
+            'm_dry': 44.3,              # Dry mass of rocket (no propellant) [kg]
+            't_burn': 6.0,              # Engine burn time [s] (only guessed)
+            'Isp': 140.0,               # Specific impulse [s] (only guessed)
+            'A_ref': 0.02,            # Reference cross-sectional area [m^2]
+            'C_d': 0.6,                 # Drag coefficient during powered/unpowered flight [-] (only guessed)
             'rho0': 1.225,              # Sea-level air density [kg/m^3]
             'H_scale': 8500.0,          # Atmospheric scale height [m]
             'g0': 9.80665,              # Standard gravity [m/s^2]
@@ -106,8 +106,8 @@ class StandaloneMock:
             'M_earth': 5.97219e24,      # Mass of Earth [kg]
             'R_earth': 6_371_000.0,     # Radius of Earth [m]
             # Parachute model: increase drag area and coefficient when deployed
-            'C_d_parachute': 1.5,       # Effective drag coefficient with parachute [-]
-            'A_parachute': 0.5          # Effective area with parachute deployed [m^2]
+            'C_d_parachute': 5.0,       # Effective drag coefficient with parachute [-] (only guessed, to ensure some sensible landing speed)
+            'A_parachute': 1          # Effective area with parachute deployed [m^2] (only guessed, to ensure some sensible landing speed)
         }
 
         # Ask user if they want to override defaults before simulation starts

@@ -271,24 +271,35 @@ if __name__ == "__main__":
     while True:
         try:
             frame = cm.receive() # We can handle frames using callbacks or by getting frame right from receive() call
-            #Collecting data
-            altitude_list.append(altitude_value)
-            oxidizer_pressure_list.append(oxidizer_pressure_value)
-            oxidizer_level_list.append(oxidizer_level_value)
-            fuel_level_list.append(fuel_level_value)
-            angle_list.append(angle_value)
-            #Calculating velocity
-            if len(altitude_list) > 1:
-                velocity_value = altitude_list[-1] - altitude_list[-2] / 0.1
-            else:
-                velocity_value = 0
-            #Calculating acceleration
-            if len(velocity_list) > 1:
-                acceleration_value = velocity_list[-1] - velocity_list[-2] / 0.1
-            else:
-                acceleration_value = 0
-            velocity_list.append(velocity_value)
-            acceleration_list.append(acceleration_value)
+            if frame == altitude_frame:
+                if not altitude_list or altitude_value != altitude_list[-1]:
+                    altitude_list.append(altitude_value)
+                    if len(altitude_list) > 1:
+                        velocity_value = (altitude_list[-1] - altitude_list[-2]) / 1
+                    else:
+                        velocity_value = 0
+                    if len(velocity_list) > 1:
+                        acceleration_value = (velocity_list[-1] - velocity_list[-2]) / 1
+                    else:
+                        acceleration_value = 0
+                    velocity_list.append(velocity_value)
+                    acceleration_list.append(acceleration_value)
+
+            if frame == oxidizer_pressure_feed_pattern:
+                if not oxidizer_pressure_list or oxidizer_pressure_value != oxidizer_pressure_list[-1]:
+                    oxidizer_pressure_list.append(oxidizer_pressure_value)
+
+            if frame == oxidizer_level_feed_pattern:
+                if not oxidizer_level_list or oxidizer_level_value != oxidizer_level_list[-1]:
+                    oxidizer_level_list.append(oxidizer_level_value)
+
+            if frame == fuel_level_feed_pattern:
+                if not fuel_level_list or fuel_level_value != fuel_level_list[-1]:
+                    fuel_level_list.append(fuel_level_value)
+
+            if frame == angle_feed_pattern:
+                if not angle_list or angle_value != angle_list[-1]:
+                    angle_list.append(angle_value)
             
             #Launch preparation sequence
             if oxidizer_level_value == 100 and fuel_level_value == 0:
@@ -310,7 +321,7 @@ if __name__ == "__main__":
         except TransportTimeoutError:
             pass
         except UnregisteredCallbackError as e:
-            print(f"unregistered frame received: {e.frame}")
+            pass
     
     #Ignition sequence
     #Closing valves for safety:
@@ -330,25 +341,36 @@ if __name__ == "__main__":
     while True:
         try:
             frame = cm.receive() # We can handle frames using callbacks or by getting frame right from receive() call
-        
-            altitude_list.append(altitude_value)
-            oxidizer_pressure_list.append(oxidizer_pressure_value)
-            oxidizer_level_list.append(oxidizer_level_value)
-            fuel_level_list.append(fuel_level_value)
-            angle_list.append(angle_value)
-            #Calculating velocity
-            if len(altitude_list) > 1:
-                velocity_value = (altitude_list[-1] - altitude_list[-2]) / 0.1
-            else:
-                velocity_value = 0
-            #Calculating acceleration
-            if len(velocity_list) > 1:
-                acceleration_value = (velocity_list[-1] - velocity_list[-2]) / 0.1
-            else:
-                acceleration_value = 0
+            
+            if frame == altitude_frame:
+                if not altitude_list or altitude_value != altitude_list[-1]:
+                    altitude_list.append(altitude_value)
+                    if len(altitude_list) > 1:
+                        velocity_value = (altitude_list[-1] - altitude_list[-2]) / 1
+                    else:
+                        velocity_value = 0
+                    if len(velocity_list) > 1:
+                        acceleration_value = (velocity_list[-1] - velocity_list[-2]) / 1
+                    else:
+                        acceleration_value = 0
+                    velocity_list.append(velocity_value)
+                    acceleration_list.append(acceleration_value)
 
-            velocity_list.append(velocity_value)
-            acceleration_list.append(acceleration_value)
+            if frame == oxidizer_pressure_feed_pattern:
+                if not oxidizer_pressure_list or oxidizer_pressure_value != oxidizer_pressure_list[-1]:
+                    oxidizer_pressure_list.append(oxidizer_pressure_value)
+
+            if frame == oxidizer_level_feed_pattern:
+                if not oxidizer_level_list or oxidizer_level_value != oxidizer_level_list[-1]:
+                    oxidizer_level_list.append(oxidizer_level_value)
+
+            if frame == fuel_level_feed_pattern:
+                if not fuel_level_list or fuel_level_value != fuel_level_list[-1]:
+                    fuel_level_list.append(fuel_level_value)
+
+            if frame == angle_feed_pattern:
+                if not angle_list or angle_value != angle_list[-1]:
+                    angle_list.append(angle_value)
 
             if len(altitude_list) > 1:
                 if altitude_list[-1] < altitude_list[-2]:
@@ -361,8 +383,9 @@ if __name__ == "__main__":
         except TransportTimeoutError:
             pass
         except UnregisteredCallbackError as e:
-            print(f"unregistered frame received: {e.frame}")
+            pass
 
+# Data plotting
 if __name__ == "__main__":
     if plt is not None:
         def _filtered_xy(series):
@@ -373,63 +396,47 @@ if __name__ == "__main__":
                     xs.append(i)
                     ys.append(v)
             return xs, ys
-        def _velocity_xy(series):
-            xs = []
-            vs = []
-            prev_i = None
-            prev_v = None
-            for i, v in enumerate(series):
-                if v is None:
-                    continue
-                if prev_i is not None and prev_v is not None:
-                    dt = i - prev_i
-                    if dt > 0:
-                        vs.append((v - prev_v) / dt)
-                        xs.append(i)
-                prev_i = i
-                prev_v = v
-            return xs, vs
         fig, axes = plt.subplots(3, 2, figsize=(12, 10))
         ax1 = axes[0][0]
         x, y = _filtered_xy(altitude_list)
         ax1.plot(x, y, label="Altitude")
         ax1.set_title("Altitude")
-        ax1.set_xlabel("Sample")
+        ax1.set_xlabel("Time in seconds")
         ax1.set_ylabel("m")
         ax1.grid(True)
         ax2 = axes[0][1]
         x, y = _filtered_xy(oxidizer_pressure_list)
         ax2.plot(x, y, color="tab:orange", label="Oxidizer Pressure")
         ax2.set_title("Oxidizer Pressure")
-        ax2.set_xlabel("Sample")
+        ax2.set_xlabel("Time in seconds")
         ax2.set_ylabel("bar")
         ax2.grid(True)
         ax3 = axes[1][0]
         x, y = _filtered_xy(oxidizer_level_list)
         ax3.plot(x, y, color="tab:green", label="Oxidizer Level")
         ax3.set_title("Oxidizer Level")
-        ax3.set_xlabel("Sample")
+        ax3.set_xlabel("Time in seconds")
         ax3.set_ylabel("%")
         ax3.grid(True)
         ax4 = axes[1][1]
         x, y = _filtered_xy(fuel_level_list)
         ax4.plot(x, y, color="tab:red", label="Fuel Level")
         ax4.set_title("Fuel Level")
-        ax4.set_xlabel("Sample")
+        ax4.set_xlabel("Time in seconds")
         ax4.set_ylabel("%")
         ax4.grid(True)
         ax5 = axes[2][0]
-        x, y = _filtered_xy(angle_list)
-        ax5.plot(x, y, color="tab:purple", label="Angle")
-        ax5.set_title("Angle")
-        ax5.set_xlabel("Sample")
-        ax5.set_ylabel("deg")
+        x, y = _filtered_xy(acceleration_list)
+        ax5.plot(x, y, color="tab:purple", label="Acceleration")
+        ax5.set_title("Acceleration")
+        ax5.set_xlabel("Time in seconds")
+        ax5.set_ylabel("m/s^2")
         ax5.grid(True)
         ax6 = axes[2][1]
-        vx, vy = _velocity_xy(altitude_list)
-        ax6.plot(vx, vy, color="tab:brown", label="Velocity")
-        ax6.set_title("Vertical Velocity (from Altitude)")
-        ax6.set_xlabel("Sample")
+        x, y = _filtered_xy(velocity_list)
+        ax6.plot(x, y, color="tab:brown", label="Velocity")
+        ax6.set_title("Vertical Velocity")
+        ax6.set_xlabel("Time in seconds")
         ax6.set_ylabel("m/s")
         ax6.grid(True)
         fig.tight_layout()
